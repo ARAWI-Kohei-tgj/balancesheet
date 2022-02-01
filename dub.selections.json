@@ -1,0 +1,11 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"derelict-pq": "4.0.0-alpha.2",
+		"derelict-util": "3.0.0-beta.2",
+		"dpq2": "1.0.19",
+		"money": "3.0.2",
+		"stdx-allocator": "2.77.5",
+		"vibe-d": "0.9.3"
+	}
+}

@@ -1,0 +1,10 @@
+{
+	"authors": [
+		"ARAI_Kohei"
+	],
+	"copyright": "Copyright © 2021, ARAI_Kohei",
+	"description": "A minimal D application.",
+	"license": "proprietary",
+	"name": "balancesheet",
+	"dependencies": {"dpq2": "1.0.19"}
+}
