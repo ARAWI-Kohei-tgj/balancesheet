@@ -6,7 +6,8 @@ module query;
 import std.datetime: Date;
 import std.typecons: Tuple;
 import dpq2: Connection;
-import bookkeeping.titles: accountTitles;
+import titles: accountTitles;
+import postgresql: DatabaseAccess;
 
 /***********************************************************
  * 通常の購買
@@ -15,16 +16,41 @@ int[] cmdDebitOrCredit(string Mode)(Connection conn,
 				    in Tuple!(Date, "st", Date, "en") period,
 				    in string[] validTitles) @system
 if(Mode == "debit" || Mode == "credit"){
-  import std.algorithm: countUntil;
-  import dpq2;import std.stdio;
+	import std.algorithm: countUntil;
+	import dpq2;
 
-  /***************************
-   * 各勘定科目ごとの借方の金額を集計
-   ***************************/
-  enum string QUERY_DEBIT= `SELECT title_debit, coalesce(sum(price), 0)
+	/*****
+	 * tr_idを取得
+	 ***/
+const int[] listOfId= (in Date st, in Date end){
+	import std.algorithm: each;
+	@(DatabaseAccess.readonly) QueryParams cmd;
+	int[] result;
+	with(cmd){
+		sqlCommand= `SELECT tr_id
+FROM list_of_trs
+WHERE tr_date >= $1::DATE AND tr_date < $2::DATE;`;
+/*
+SELECT tr_id
+FROM list_of_trs
+WHERE shop_name <> ';期末棚卸' AND shop_name <> ';未収穫農産物'
+	AND tr_date >= $1::DATE AND tr_date < $2::DATE;
+*/
+		args.length= 2;
+		args[0]= st.toValue;
+		args[1]= end.toValue;
+	}
+	auto ans= conn.execParams(cmd);
+	ans.rangify.each!(a => result ~= a["tr_id"].as!int);
+	return result;
+}(period.st, period.en);
+
+	 /***************************
+	 * 各勘定科目ごとの借方の金額を集計
+	 ***************************/
+	enum string QUERY_DEBIT= `SELECT title_debit, coalesce(sum(price), 0)
 FROM account_voucher
-WHERE tr_date >= to_date($1::TEXT, 'YYYY-MM-DD')
-  AND tr_date < to_date($2::TEXT, 'YYYY-MM-DD')
+WHERE tr_id = ANY($1::INTEGER[])
 GROUP BY title_debit;`;
 
   /***************************
@@ -32,8 +58,7 @@ GROUP BY title_debit;`;
    ***************************/
   enum string QUERY_CREDIT= `SELECT title_credit, coalesce(sum(price), 0)
 FROM account_voucher
-WHERE tr_date >= to_date($1::TEXT, 'YYYY-MM-DD')
-  AND tr_date < to_date($2::TEXT, 'YYYY-MM-DD')
+WHERE tr_id = ANY($1::INTEGER[])
 GROUP BY title_credit;`;
 
   QueryParams cmd;
@@ -41,15 +66,14 @@ GROUP BY title_credit;`;
   result[]= 0;
 
   with(cmd){
-    args.length= 2;
+    args.length= 1;
     static if(Mode == "debit"){
       sqlCommand= QUERY_DEBIT;
     }
     else{
       sqlCommand= QUERY_CREDIT;
     }
-    args[0]= toValue(period.st.toISOExtString);
-    args[1]= toValue(period.en.toISOExtString);
+    args[0]= toValue(listOfId);
   }
 
   auto ansSQL= conn.execParams(cmd);
@@ -73,6 +97,7 @@ GROUP BY title_credit;`;
 /***********************************************************
  * 売掛金
  ***********************************************************/
+ /+
 int getSalePrice(Connection conn, in Tuple!(Date, "st", Date, "en") period) @system{
   import dpq2;
 
@@ -134,3 +159,4 @@ GROUP BY crop_name, shipment_date;
    */
 
 }
++/

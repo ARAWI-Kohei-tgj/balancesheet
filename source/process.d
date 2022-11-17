@@ -3,32 +3,32 @@ module process;
 import std.datetime: Date;
 import std.typecons: Tuple;
 import dpq2: Connection;
-import bookkeeping.titles: AccountValue;
+import titles: AccountValue;
 
 void processTrial(Connection conn, AccountValue[string] values, in Tuple!(Date, "st", Date, "en") calcPeriod, in bool isMonthly){
-  // queries
-  import std.algorithm: countUntil;
-  import dpq2;
-  import query;
-  import exception;
+	// queries
+	import std.algorithm: countUntil;
+	import dpq2;
+	import query;
+	import exception;
 
-  int sale, fees, fare, insurance, insentive;
-  /*******************************************
-   * 通常の購買
-   *
-   * Table account_voucherから集計
-   *******************************************/
-  {
-    string[] validTitles= values.keys;
-    auto debits= cmdDebitOrCredit!"debit"(conn, calcPeriod, validTitles);
-    auto credits= cmdDebitOrCredit!"credit"(conn, calcPeriod, validTitles);
+	int sale, fees, fare, insurance, insentive;
+	/*******************************************
+	 * 通常の購買
+	 *
+	 * Table account_voucherから集計
+	 *******************************************/
+	{
+		string[] validTitles= values.keys;
+		auto debits= cmdDebitOrCredit!"debit"(conn, calcPeriod, validTitles);
+		auto credits= cmdDebitOrCredit!"credit"(conn, calcPeriod, validTitles);
 
-    foreach(scope size_t i, string titleStr; validTitles){
-      values[titleStr].priceDebit= debits[i];
-      values[titleStr].priceCredit= credits[i];
-    }
-  }
-
+		foreach(scope size_t i, string titleStr; validTitles){
+			values[titleStr].priceDebit= debits[i];
+			values[titleStr].priceCredit= credits[i];
+		}
+	}
+/+
   /*******************************************
    * 売上高
    *
@@ -134,84 +134,84 @@ WHERE shipment_insentive.shipment_date >= $1::DATE
    * 売掛金の借方= 売上高-諸経費+奨励金
    *****************************************/
   values["売掛金"].priceDebit= sale-(fees+fare+insurance)+insentive;
++/
+	/*******************************************
+	 * 減価償却費
+	 *****************************************/
+	{
+		import bookkeeping.asset;
 
-  /*******************************************
-   * 減価償却費
-   *****************************************/
-  {
-    import bookkeeping.asset;
+		const FixedAsset[] fixedAssets= () @system{
+			import std.conv: to;
+			enum string QUERY_STR= "SELECT * FROM fixed_assets;";
+			auto answer= conn.exec(QUERY_STR);
+			FixedAsset[] result= void;
+			size_t idx= 0;
 
-    const FixedAsset[] fixedAssets= () @system{
-      import std.conv: to;
-      enum string QUERY_STR= "SELECT * FROM fixed_assets;";
-      auto answer= conn.exec(QUERY_STR);
-      FixedAsset[] result= void;
-      size_t idx= 0;
+			if(!answer[0][0].isNull){
+				if(answer[0].length == 6){
+					result= new FixedAsset[answer.length];	// GC
+					foreach(scope theRow; answer.rangify){
+						result[idx++]= FixedAsset(theRow["asset_name"].as!string,
+								Date.fromISOExtString(theRow["acquisition_date"].as!string),
+								theRow["title"].as!string,
+								to!uint(theRow["initial_price"].as!string),
+								to!uint(theRow["economic_life"].as!string));
+					}
+				}
+				else{
+					throw new TableStructNotCorrect("agriDB", "fixed_assets");
+				}
+			}
+			else{}	// a null array returns
 
-      if(!answer[0][0].isNull){
-	if(answer[0].length == 6){
-	  result= new FixedAsset[answer.length];	// GC
-	  foreach(scope theRow; answer.rangify){
-	    result[idx++]= FixedAsset(theRow["asset_name"].as!string,
-				      Date.fromISOExtString(theRow["acquisition_date"].as!string),
-				      theRow["title"].as!string,
-				      to!uint(theRow["initial_price"].as!string),
-				      to!uint(theRow["economic_life"].as!string));
-	  }
+			return result;
+		}();
+
+		uint deprecPrice;
+		foreach(scope theAsset; fixedAssets){
+			if(isMonthly){
+				deprecPrice= theAsset.priceDeprec!"month"(calcPeriod.st.year, calcPeriod.st.month);
+			}
+			else{
+				deprecPrice= theAsset.priceDeprec!"year"(calcPeriod.st.year);
+			}
+			values["減価償却費"].priceDebit += deprecPrice;
+			values[theAsset.accountTitle].priceCredit += deprecPrice;
+		}
 	}
-	else{
-	  throw new TableStructNotCorrect("agriDB", "fixed_assets");
-	}
-      }
-      else{}	// a null array returns
-
-      return result;
-    }();
-
-    uint deprecPrice;
-    foreach(scope theAsset; fixedAssets){
-      if(isMonthly){
-	deprecPrice= theAsset.priceDeprec!"month"(calcPeriod.st.year, calcPeriod.st.month);
-      }
-      else{
-	deprecPrice= theAsset.priceDeprec!"year"(calcPeriod.st.year);
-      }
-      values["減価償却費"].priceDebit += deprecPrice;
-      values[theAsset.accountTitle].priceCredit += deprecPrice;
-    }
-  }
 }
 
 /*************************************************************
  * 期間内の純利益を算出
  *************************************************************/
 int getNetIncome(in AccountValue[string] values) @safe pure{
-  import bookkeeping.titles: AccountCategory;
-  int totalAsset, totalLiability, totalEquity, totalExpense, totalRevenue;
-  foreach(scope theTitle; values){
-    final switch(theTitle.category){
-    case AccountCategory.asset:
-      totalAsset += theTitle.balanceThisTerm;
-      break;
-    case AccountCategory.liability:
-      totalLiability += theTitle.balanceThisTerm;
-      break;
-    case AccountCategory.equity:
-      totalEquity += theTitle.balanceThisTerm;
-      break;
-    case AccountCategory.expense:
-      totalExpense += theTitle.balanceThisTerm;
-      break;
-    case AccountCategory.revenue:
-      totalRevenue += theTitle.balanceThisTerm;
-    }
-  }
+	import titles: AccountCategory;
+	int totalAsset, totalLiability, totalEquity, totalExpense, totalRevenue;
+	foreach(scope theTitle; values){
+		final switch(theTitle.category){
+		case AccountCategory.asset:
+			totalAsset += theTitle.balanceThisTerm;
+			break;
+		case AccountCategory.liability:
+			totalLiability += theTitle.balanceThisTerm;
+			break;
+		case AccountCategory.equity:
+			totalEquity += theTitle.balanceThisTerm;
+			break;
+		case AccountCategory.expense:
+			totalExpense += theTitle.balanceThisTerm;
+			break;
+		case AccountCategory.revenue:
+			totalRevenue += theTitle.balanceThisTerm;
+		}
+	}
 
-  const int incomesBS= totalAsset-totalLiability-totalEquity;
-  const int incomesPL= totalRevenue-totalExpense;
-  if(incomesBS != incomesPL){
-    throw new Exception("貸借対照表と損益計算表の結果が不一致");
-  }
+	const int incomesBS= totalAsset-totalLiability-totalEquity;
+	const int incomesPL= totalRevenue-totalExpense;
+	if(incomesBS != incomesPL){
+		throw new Exception("貸借対照表と損益計算表の結果が不一致");
+	}
 
-  return incomesBS;
+	return incomesBS;
 }
